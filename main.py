@@ -1,6 +1,7 @@
 import asyncio
 import threading
 import uvicorn
+import os
 from aiogram import Bot, Dispatcher
 from aiogram.types import BotCommand
 import config
@@ -10,18 +11,14 @@ import db
 
 async def set_commands():
     await bot.set_my_commands([
-        BotCommand(command="start", description="Запуск"),
+        BotCommand(command="start", description="Главное меню"),
         BotCommand(command="help", description="Справка"),
         BotCommand(command="search_vk", description="Поиск в ВК"),
         BotCommand(command="search_ip", description="Поиск по IP"),
         BotCommand(command="search_domain", description="Поиск по домену"),
         BotCommand(command="search_nick", description="Поиск по нику"),
         BotCommand(command="log", description="Фото логгер"),
-        BotCommand(command="admin", description="Админ-панель"),
-        BotCommand(command="give_access", description="Выдать доступ"),
-        BotCommand(command="revoke_access", description="Отозвать доступ"),
-        BotCommand(command="list_users", description="Список пользователей"),
-        BotCommand(command="get_logs", description="Логи пользователя")
+        BotCommand(command="admin", description="Админ-панель")
     ])
 
 async def bot_polling():
@@ -33,8 +30,6 @@ def run_web():
 
 if __name__ == "__main__":
     db.init_db()
-    # Запускаем веб-сервер в отдельном потоке
     web_thread = threading.Thread(target=run_web, daemon=True)
     web_thread.start()
-    # Запускаем бота
     asyncio.run(bot_polling())
