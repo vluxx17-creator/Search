@@ -1,6 +1,6 @@
 from aiogram import Bot, Dispatcher, types, F
-from aiogram.filters import Command, CommandObject, StateFilter
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
+from aiogram.filters import Command, CommandObject
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 import config, db, api_handlers
@@ -11,11 +11,9 @@ import os
 bot = Bot(token=config.BOT_TOKEN)
 dp = Dispatcher()
 
-# Состояния для FSM (админские вводы)
 class AdminStates(StatesGroup):
-    waiting_for_user_id = State()
-    waiting_for_days = State()
-    waiting_for_logs_user = State()
+    waiting_user_id = State()
+    waiting_days = State()
 
 # ---------- ДЕКОРАТОРЫ ----------
 def subscription_required(func):
@@ -24,7 +22,7 @@ def subscription_required(func):
         if db.is_admin(user_id) or db.is_subscribed(user_id):
             return await func(message, *args, **kwargs)
         else:
-            await message.answer("❌ Доступ только по подписке. Обратитесь к администратору.")
+            await message.answer("❌ <b>Доступ только по подписке.</b> Обратитесь к администратору.", parse_mode="HTML")
     return wrapper
 
 def admin_required(func):
@@ -32,219 +30,277 @@ def admin_required(func):
         if db.is_admin(message.from_user.id):
             return await func(message, *args, **kwargs)
         else:
-            await message.answer("⛔ Только для администратора.")
+            await message.answer("⛔ <b>Только для администратора.</b>", parse_mode="HTML")
     return wrapper
+
+# ---------- МЕНЮ ----------
+def main_menu():
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔍 Поиск", callback_data="menu_search")],
+        [InlineKeyboardButton(text="📡 Логер (сбор данных)", callback_data="menu_logger")],
+        [InlineKeyboardButton(text="⚙️ Админ-панель", callback_data="menu_admin")]
+    ])
+    return kb
+
+def search_menu():
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="👤 ВК по имени", callback_data="search_vk")],
+        [InlineKeyboardButton(text="🌐 IP-адрес", callback_data="search_ip")],
+        [InlineKeyboardButton(text="🏠 Домен (whois)", callback_data="search_domain")],
+        [InlineKeyboardButton(text="🔎 Никнейм", callback_data="search_nick")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="menu_main")]
+    ])
+    return kb
+
+def admin_menu():
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📋 Список пользователей", callback_data="admin_list")],
+        [InlineKeyboardButton(text="➕ Выдать подписку", callback_data="admin_give")],
+        [InlineKeyboardButton(text="➖ Отозвать подписку", callback_data="admin_revoke")],
+        [InlineKeyboardButton(text="📜 Логи пользователя", callback_data="admin_logs")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="menu_main")]
+    ])
+    return kb
 
 # ---------- КОМАНДЫ ----------
 @dp.message(Command("start"))
-async def start_cmd(message: Message, *args, **kwargs):
+async def start_cmd(message: Message):
     user = message.from_user
     db.add_user(user.id, user.username, user.first_name, user.last_name)
     if user.id == config.ADMIN_ID:
         db.set_admin(user.id, 1)
-    # Главное меню с инлайн-кнопками
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔍 Поиск по VK", callback_data="search_vk")],
-        [InlineKeyboardButton(text="🌐 Поиск по IP", callback_data="search_ip")],
-        [InlineKeyboardButton(text="🏠 Поиск по домену", callback_data="search_domain")],
-        [InlineKeyboardButton(text="👤 Поиск по нику", callback_data="search_nick")],
-        [InlineKeyboardButton(text="📸 Логгер (фото)", callback_data="log")],
-        [InlineKeyboardButton(text="⚙️ Админ-панель", callback_data="admin_panel")]
-    ])
-    await message.answer("Добро пожаловать в hsCmd beta!\nВыберите действие:", reply_markup=kb)
-
-@dp.message(Command("help"))
-async def help_cmd(message: Message, *args, **kwargs):
     await message.answer(
-        "🔍 Команды:\n"
-        "/start – главное меню\n"
-        "/search_vk <имя> – поиск в ВК\n"
-        "/search_ip <IP> – геолокация и провайдер\n"
-        "/search_domain <домен> – whois\n"
-        "/search_nick <ник> – проверка наличия на платформах\n"
-        "/log – сделать фото через камеру (подписка)\n"
-        "Админ-команды:\n"
-        "/admin – панель управления"
+        "<b>Добро пожаловать в hsCmd beta!</b>\n"
+        "<i>Выберите действие из меню ниже.</i>\n\n"
+        "Или используйте команды:\n"
+        "/search_vk <имя>\n"
+        "/search_ip <IP>\n"
+        "/search_domain <домен>\n"
+        "/search_nick <ник>",
+        reply_markup=main_menu(),
+        parse_mode="HTML"
     )
 
-# -------- ОБРАБОТЧИКИ ИНЛАЙН-КНОПОК (колбэки) ----------
-@dp.callback_query(lambda c: c.data in ["search_vk", "search_ip", "search_domain", "search_nick", "log", "admin_panel"])
-async def main_menu_callback(callback: CallbackQuery, *args, **kwargs):
-    await callback.answer()
-    data = callback.data
-    if data == "search_vk":
-        await callback.message.answer("Введите имя для поиска в ВК (например: Иван Петров)")
-    elif data == "search_ip":
-        await callback.message.answer("Введите IP-адрес (например: 8.8.8.8)")
-    elif data == "search_domain":
-        await callback.message.answer("Введите домен (например: example.com)")
-    elif data == "search_nick":
-        await callback.message.answer("Введите никнейм (например: john_doe)")
-    elif data == "log":
-        # Проверка подписки
-        if not db.is_subscribed(callback.from_user.id) and not db.is_admin(callback.from_user.id):
-            await callback.message.answer("❌ Требуется подписка.")
-            return
-        web_app_url = f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME', 'localhost')}/camera?user_id={callback.from_user.id}"
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📸 Сделать снимок", web_app=WebAppInfo(url=web_app_url))]
-        ])
-        await callback.message.answer("Нажмите кнопку, чтобы открыть камеру.", reply_markup=kb)
-    elif data == "admin_panel":
-        if not db.is_admin(callback.from_user.id):
-            await callback.message.answer("⛔ Нет прав.")
-            return
-        await admin_panel_show(callback.message)
+@dp.message(Command("help"))
+async def help_cmd(message: Message):
+    await message.answer(
+        "<b>Справка</b>\n"
+        "/start – главное меню\n"
+        "/search_vk <имя> – поиск в ВК\n"
+        "/search_ip <IP> – геолокация\n"
+        "/search_domain <домен> – whois\n"
+        "/search_nick <ник> – проверка на площадках\n"
+        "/log – получить ссылку на логер\n"
+        "/admin – админ-панель",
+        parse_mode="HTML"
+    )
 
-# -------- ОСНОВНЫЕ КОМАНДЫ (текстовые) ----------
+# ---------- ОБРАБОТЧИКИ КОМАНД ПОИСКА (прямой ввод) ----------
 @dp.message(Command("search_vk"))
 @subscription_required
-async def search_vk(message: Message, command: CommandObject, *args, **kwargs):
+async def cmd_search_vk(message: Message, command: CommandObject):
     query = command.args
     if not query:
-        await message.answer("Укажите имя, например: /search_vk Иван")
+        await message.answer("Укажите имя, например: /search_vk Иван", parse_mode="HTML")
         return
     data = await api_handlers.search_vk_by_name(query)
-    result_text = json.dumps(data, ensure_ascii=False, indent=2)[:4000]
-    db.add_log(message.from_user.id, "vk_search", query, result_text)
-    await message.answer(f"Результаты поиска VK:\n{result_text}")
+    await send_search_result(message, data, "VK", query)
 
 @dp.message(Command("search_ip"))
 @subscription_required
-async def search_ip(message: Message, command: CommandObject, *args, **kwargs):
-    ip = command.args
-    if not ip:
-        await message.answer("Укажите IP, например: /search_ip 8.8.8.8")
+async def cmd_search_ip(message: Message, command: CommandObject):
+    query = command.args
+    if not query:
+        await message.answer("Укажите IP, например: /search_ip 8.8.8.8", parse_mode="HTML")
         return
-    data = await api_handlers.search_by_ip(ip)
-    result_text = json.dumps(data, ensure_ascii=False, indent=2)
-    db.add_log(message.from_user.id, "ip_search", ip, result_text)
-    await message.answer(f"Информация по IP:\n{result_text}")
+    data = await api_handlers.search_by_ip(query)
+    await send_search_result(message, data, "IP", query)
 
 @dp.message(Command("search_domain"))
 @subscription_required
-async def search_domain(message: Message, command: CommandObject, *args, **kwargs):
-    domain = command.args
-    if not domain:
-        await message.answer("Укажите домен, например: /search_domain example.com")
+async def cmd_search_domain(message: Message, command: CommandObject):
+    query = command.args
+    if not query:
+        await message.answer("Укажите домен, например: /search_domain example.com", parse_mode="HTML")
         return
-    data = await api_handlers.search_by_domain(domain)
-    result_text = json.dumps(data, ensure_ascii=False, indent=2)
-    db.add_log(message.from_user.id, "domain_search", domain, result_text)
-    await message.answer(f"Whois информация:\n{result_text}")
+    data = await api_handlers.search_by_domain(query)
+    await send_search_result(message, data, "домен", query)
 
 @dp.message(Command("search_nick"))
 @subscription_required
-async def search_nick(message: Message, command: CommandObject, *args, **kwargs):
-    nick = command.args
-    if not nick:
-        await message.answer("Укажите никнейм, например: /search_nick john_doe")
+async def cmd_search_nick(message: Message, command: CommandObject):
+    query = command.args
+    if not query:
+        await message.answer("Укажите никнейм, например: /search_nick john_doe", parse_mode="HTML")
         return
-    data = await api_handlers.search_by_nick(nick)
-    result_text = json.dumps(data, ensure_ascii=False, indent=2)
-    db.add_log(message.from_user.id, "nick_search", nick, result_text)
-    await message.answer(f"Результаты по нику:\n{result_text}")
+    data = await api_handlers.search_by_nick(query)
+    await send_search_result(message, data, "никнейм", query)
 
-# -------- ЛОГГЕР (веб-приложение) ---------
 @dp.message(Command("log"))
 @subscription_required
-async def log_cmd(message: Message, *args, **kwargs):
-    web_app_url = f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME', 'localhost')}/camera?user_id={message.from_user.id}"
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📸 Сделать снимок", web_app=WebAppInfo(url=web_app_url))]
-    ])
-    await message.answer("Нажмите кнопку, чтобы открыть камеру.", reply_markup=kb)
+async def cmd_log(message: Message):
+    await send_logger_link(message)
 
-# Обработчик фото (присылаемых через веб-приложение или напрямую)
-@dp.message(F.photo)
-async def handle_photo(message: Message, *args, **kwargs):
-    user_id = message.from_user.id
-    if not db.is_subscribed(user_id) and not db.is_admin(user_id):
-        await message.answer("Доступ запрещён.")
-        return
-    file_id = message.photo[-1].file_id
-    file = await bot.get_file(file_id)
-    file_path = file.file_path
-    downloaded = await bot.download_file(file_path)
-    os.makedirs("faces", exist_ok=True)
-    filename = f"faces/{user_id}_{int(datetime.datetime.now().timestamp())}.jpg"
-    with open(filename, "wb") as f:
-        f.write(downloaded.getvalue())
-    db.add_log(user_id, "face_capture", "camera", filename)
-    await message.answer("✅ Фото сохранено в лог.")
+# ---------- ОБЩАЯ ФУНКЦИЯ ВЫВОДА РЕЗУЛЬТАТОВ ----------
+async def send_search_result(message, data, search_type, query):
+    if isinstance(data, dict) and "error" in data:
+        output = f"<b>❌ Ошибка:</b> <code>{data['error']}</code>"
+    else:
+        output = f"<b>Результаты поиска ({search_type}):</b>\n<pre>{json.dumps(data, ensure_ascii=False, indent=2)[:3000]}</pre>"
+    output += "\n\n<blockquote>Данные получены из открытых источников.</blockquote>"
+    await message.answer(output, parse_mode="HTML")
+    db.add_log(message.from_user.id, f"search_{search_type}", query, output[:500])
 
-# -------- АДМИН-ПАНЕЛЬ ---------
-@dp.message(Command("admin"))
-@admin_required
-async def admin_cmd(message: Message, *args, **kwargs):
-    await admin_panel_show(message)
+# ---------- ЛОГЕР (ссылка) ----------
+async def send_logger_link(message):
+    host = os.getenv("RENDER_EXTERNAL_HOSTNAME", "localhost")
+    link = f"https://{host}/log"
+    db.add_log(message.from_user.id, "logger_link_request", link, "")
+    await message.answer(
+        f"<b>📡 Логер</b>\n"
+        f"Перейдите по ссылке для сбора данных:\n"
+        f"<code>{link}</code>\n\n"
+        "<i>При переходе ваш IP, User-Agent и реферер будут зафиксированы.</i>",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔗 Открыть логер", url=link)],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="menu_main")]
+        ]),
+        parse_mode="HTML"
+    )
 
-async def admin_panel_show(message: Message):
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📋 Список пользователей", callback_data="admin_list")],
-        [InlineKeyboardButton(text="➕ Выдать доступ", callback_data="admin_give")],
-        [InlineKeyboardButton(text="➖ Отозвать доступ", callback_data="admin_revoke")],
-        [InlineKeyboardButton(text="📜 Логи пользователя", callback_data="admin_logs")]
-    ])
-    await message.answer("Админ-панель:", reply_markup=kb)
-
-@dp.callback_query(lambda c: c.data.startswith("admin_"))
-async def admin_callback(callback: CallbackQuery, state: FSMContext, *args, **kwargs):
+# ---------- ОБРАБОТЧИКИ МЕНЮ (callbacks) ----------
+@dp.callback_query(lambda c: c.data.startswith("menu_"))
+async def menu_callback(callback: CallbackQuery):
     await callback.answer()
+    data = callback.data
+    if data == "menu_main":
+        await callback.message.edit_text("<b>Главное меню</b>", reply_markup=main_menu(), parse_mode="HTML")
+    elif data == "menu_search":
+        await callback.message.edit_text("<b>🔍 Выберите тип поиска:</b>", reply_markup=search_menu(), parse_mode="HTML")
+    elif data == "menu_logger":
+        await send_logger_link(callback.message)
+    elif data == "menu_admin":
+        if not db.is_admin(callback.from_user.id):
+            await callback.message.answer("⛔ <b>Нет прав.</b>", parse_mode="HTML")
+            return
+        await callback.message.edit_text("<b>⚙️ Админ-панель</b>", reply_markup=admin_menu(), parse_mode="HTML")
+
+@dp.callback_query(lambda c: c.data.startswith("search_"))
+async def search_callback(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    search_type = callback.data.replace("search_", "")
+    await state.set_data({"search_type": search_type})
+    prompts = {
+        "vk": "Введите <b>имя</b> для поиска в ВК (например: <i>Иван Петров</i>):",
+        "ip": "Введите <b>IP-адрес</b> (например: <code>8.8.8.8</code>):",
+        "domain": "Введите <b>домен</b> (например: <code>example.com</code>):",
+        "nick": "Введите <b>никнейм</b> (например: <i>john_doe</i>):"
+    }
+    await callback.message.answer(prompts.get(search_type, "Введите данные:"), parse_mode="HTML")
+
+# ---------- ОБРАБОТЧИК ТЕКСТОВЫХ СООБЩЕНИЙ (для поиска после выбора типа) ----------
+@dp.message(lambda message: True)
+async def handle_search_input(message: Message, state: FSMContext):
+    data = await state.get_data()
+    search_type = data.get("search_type")
+    if not search_type:
+        # Если нет состояния – игнорируем (или можно предложить меню)
+        return
+    query = message.text.strip()
+    if not query:
+        await message.answer("Введите непустое значение.", parse_mode="HTML")
+        return
+
+    # Проверка подписки
+    if not db.is_admin(message.from_user.id) and not db.is_subscribed(message.from_user.id):
+        await message.answer("❌ <b>Требуется подписка.</b>", parse_mode="HTML")
+        await state.clear()
+        return
+
+    # Выполняем поиск
+    func_map = {
+        "vk": api_handlers.search_vk_by_name,
+        "ip": api_handlers.search_by_ip,
+        "domain": api_handlers.search_by_domain,
+        "nick": api_handlers.search_by_nick
+    }
+    func = func_map.get(search_type)
+    if not func:
+        await message.answer("Неизвестный тип поиска.", parse_mode="HTML")
+        await state.clear()
+        return
+
+    result = await func(query)
+    await send_search_result(message, result, search_type, query)
+    await state.clear()
+
+# ---------- АДМИН-КОЛБЭКИ ----------
+@dp.callback_query(lambda c: c.data.startswith("admin_"))
+async def admin_callback(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    if not db.is_admin(callback.from_user.id):
+        await callback.message.answer("⛔ <b>Нет прав.</b>", parse_mode="HTML")
+        return
     data = callback.data
     if data == "admin_list":
         users = db.get_all_users()
-        text = "Список пользователей:\n"
+        text = "<b>Список пользователей:</b>\n"
         for u in users:
-            sub_until = datetime.datetime.fromtimestamp(u[4]).strftime("%Y-%m-%d %H:%M") if u[4] else "нет"
+            sub = datetime.datetime.fromtimestamp(u[4]).strftime("%Y-%m-%d %H:%M") if u[4] else "нет"
             admin = "✅" if u[5] else "❌"
-            text += f"ID: {u[0]}, @{u[1]}, подписка до: {sub_until}, админ: {admin}\n"
-        await callback.message.answer(text[:4000])
+            text += f"<code>{u[0]}</code> @{u[1]} – подписка до {sub} – админ {admin}\n"
+        await callback.message.answer(text[:4000], parse_mode="HTML")
     elif data == "admin_give":
-        await callback.message.answer("Введите ID пользователя и количество дней через пробел, например: 123456 30")
-        await state.set_state(AdminStates.waiting_for_user_id)
+        await callback.message.answer("Введите <b>ID пользователя</b> и <b>количество дней</b> через пробел:\n<code>123456 30</code>", parse_mode="HTML")
+        await state.set_state(AdminStates.waiting_user_id)
     elif data == "admin_revoke":
-        await callback.message.answer("Введите ID пользователя для отзыва подписки:")
-        await state.set_state(AdminStates.waiting_for_days)  # используем другое состояние
+        await callback.message.answer("Введите <b>ID пользователя</b> для отзыва подписки:", parse_mode="HTML")
+        await state.set_state(AdminStates.waiting_days)
     elif data == "admin_logs":
-        await callback.message.answer("Введите ID пользователя для просмотра логов:")
-        await state.set_state(AdminStates.waiting_for_logs_user)
+        await callback.message.answer("Введите <b>ID пользователя</b> для просмотра логов:", parse_mode="HTML")
+        await state.set_state(AdminStates.waiting_days)
 
-# FSM для ввода данных админом
-@dp.message(StateFilter(AdminStates.waiting_for_user_id))
-async def admin_input_give(message: Message, state: FSMContext, *args, **kwargs):
-    text = message.text.strip()
-    parts = text.split()
+# FSM для админа
+@dp.message(AdminStates.waiting_user_id)
+async def admin_give_access(message: Message, state: FSMContext):
+    parts = message.text.strip().split()
     if len(parts) == 2 and parts[1].isdigit():
         user_id = int(parts[0])
         days = int(parts[1])
         until = int(datetime.datetime.now().timestamp()) + days*86400
         db.update_subscription(user_id, until)
-        await message.answer(f"✅ Пользователю {user_id} выдан доступ на {days} дней.")
+        await message.answer(f"✅ <b>Пользователю {user_id} выдан доступ на {days} дней.</b>", parse_mode="HTML")
     else:
-        await message.answer("Неверный формат. Используйте: ID пробел количество дней")
+        await message.answer("Неверный формат. Используйте: <code>ID пробел количество_дней</code>", parse_mode="HTML")
     await state.clear()
 
-@dp.message(StateFilter(AdminStates.waiting_for_days))
-async def admin_input_revoke(message: Message, state: FSMContext, *args, **kwargs):
+@dp.message(AdminStates.waiting_days)
+async def admin_revoke_or_logs(message: Message, state: FSMContext):
     user_id = int(message.text.strip()) if message.text.strip().isdigit() else None
-    if user_id:
+    if not user_id:
+        await message.answer("Введите корректный <b>ID</b>", parse_mode="HTML")
+        return
+    await message.answer("Что сделать? Напишите <b>revoke</b> для отзыва или <b>logs</b> для просмотра логов.", parse_mode="HTML")
+    await state.update_data(user_id=user_id)
+
+@dp.message(lambda message: message.text.lower() in ["revoke", "logs"])
+async def admin_action_confirm(message: Message, state: FSMContext):
+    action = message.text.lower()
+    data = await state.get_data()
+    user_id = data.get("user_id")
+    if not user_id:
+        await message.answer("Сначала введите ID.")
+        return
+    if action == "revoke":
         db.update_subscription(user_id, 0)
-        await message.answer(f"✅ Подписка пользователя {user_id} отозвана.")
-    else:
-        await message.answer("Введите корректный ID.")
-    await state.clear()
-
-@dp.message(StateFilter(AdminStates.waiting_for_logs_user))
-async def admin_input_logs(message: Message, state: FSMContext, *args, **kwargs):
-    user_id = int(message.text.strip()) if message.text.strip().isdigit() else None
-    if user_id:
+        await message.answer(f"✅ <b>Подписка пользователя {user_id} отозвана.</b>", parse_mode="HTML")
+    elif action == "logs":
         logs = db.get_user_logs(user_id)
         if not logs:
             await message.answer("Логов нет.")
         else:
-            text = "\n".join([f"{l[1]} – {l[2]} – {l[3][:200]}" for l in logs])
-            await message.answer(f"Логи пользователя {user_id}:\n{text[:4000]}")
-    else:
-        await message.answer("Введите корректный ID.")
+            text = "<b>Логи пользователя</b>\n"
+            for l in logs[:10]:
+                text += f"<code>{l[1]}</code> – {l[2]} – {l[3][:100]}\n"
+            await message.answer(text[:4000], parse_mode="HTML")
     await state.clear()
