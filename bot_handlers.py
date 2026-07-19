@@ -15,16 +15,7 @@ class AdminStates(StatesGroup):
     waiting_user_id = State()
     waiting_days = State()
 
-# ---------- ДЕКОРАТОРЫ ----------
-def subscription_required(func):
-    async def wrapper(message: Message, *args, **kwargs):
-        user_id = message.from_user.id
-        if db.is_admin(user_id) or db.is_subscribed(user_id):
-            return await func(message, *args, **kwargs)
-        else:
-            await message.answer("❌ <b>Доступ только по подписке.</b> Обратитесь к администратору.", parse_mode="HTML")
-    return wrapper
-
+# ---------- ДЕКОРАТОР АДМИНА (только для админ-панели) ----------
 def admin_required(func):
     async def wrapper(message: Message, *args, **kwargs):
         if db.is_admin(message.from_user.id):
@@ -37,7 +28,7 @@ def admin_required(func):
 def main_menu():
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔍 Поиск", callback_data="menu_search")],
-        [InlineKeyboardButton(text="📡 Логер (сбор данных)", callback_data="menu_logger")],
+        [InlineKeyboardButton(text="📡 Мой IP / Логер", callback_data="menu_logger")],
         [InlineKeyboardButton(text="⚙️ Админ-панель", callback_data="menu_admin")]
     ])
     return kb
@@ -70,13 +61,19 @@ async def start_cmd(message: Message):
     if user.id == config.ADMIN_ID:
         db.set_admin(user.id, 1)
     await message.answer(
-        "<b>Добро пожаловать в hsCmd beta!</b>\n"
-        "<i>Выберите действие из меню ниже.</i>\n\n"
-        "Или используйте команды:\n"
+        "<b>🔍 hsCmd beta — поиск по открытым источникам</b>\n\n"
+        "Я умею искать:\n"
+        "• 👤 Людей в ВКонтакте по имени\n"
+        "• 🌐 Геолокацию и провайдера по IP\n"
+        "• 🏠 Информацию о домене (whois)\n"
+        "• 🔎 Никнеймы на разных платформах\n\n"
+        "Также я покажу ваш IP и другую техническую информацию по команде /log.\n\n"
+        "Выберите действие в меню или используйте команды:\n"
         "/search_vk <имя>\n"
         "/search_ip <IP>\n"
         "/search_domain <домен>\n"
-        "/search_nick <ник>",
+        "/search_nick <ник>\n"
+        "/log — получить отчёт о вашем подключении",
         reply_markup=main_menu(),
         parse_mode="HTML"
     )
@@ -84,20 +81,19 @@ async def start_cmd(message: Message):
 @dp.message(Command("help"))
 async def help_cmd(message: Message):
     await message.answer(
-        "<b>Справка</b>\n"
+        "<b>📖 Справка</b>\n\n"
         "/start – главное меню\n"
-        "/search_vk <имя> – поиск в ВК\n"
-        "/search_ip <IP> – геолокация\n"
-        "/search_domain <домен> – whois\n"
-        "/search_nick <ник> – проверка на площадках\n"
-        "/log – получить ссылку на логер\n"
-        "/admin – админ-панель",
+        "/search_vk <имя> – поиск людей в ВК\n"
+        "/search_ip <IP> – геолокация и провайдер\n"
+        "/search_domain <домен> – whois-информация\n"
+        "/search_nick <ник> – поиск на платформах\n"
+        "/log – показать ваш IP и данные о подключении\n\n"
+        "Администратор имеет доступ к панели управления.",
         parse_mode="HTML"
     )
 
-# ---------- ОБРАБОТЧИКИ КОМАНД ПОИСКА (прямой ввод) ----------
+# ---------- ПОИСКОВЫЕ КОМАНДЫ (без подписки) ----------
 @dp.message(Command("search_vk"))
-@subscription_required
 async def cmd_search_vk(message: Message, command: CommandObject):
     query = command.args
     if not query:
@@ -107,7 +103,6 @@ async def cmd_search_vk(message: Message, command: CommandObject):
     await send_search_result(message, data, "VK", query)
 
 @dp.message(Command("search_ip"))
-@subscription_required
 async def cmd_search_ip(message: Message, command: CommandObject):
     query = command.args
     if not query:
@@ -117,7 +112,6 @@ async def cmd_search_ip(message: Message, command: CommandObject):
     await send_search_result(message, data, "IP", query)
 
 @dp.message(Command("search_domain"))
-@subscription_required
 async def cmd_search_domain(message: Message, command: CommandObject):
     query = command.args
     if not query:
@@ -127,7 +121,6 @@ async def cmd_search_domain(message: Message, command: CommandObject):
     await send_search_result(message, data, "домен", query)
 
 @dp.message(Command("search_nick"))
-@subscription_required
 async def cmd_search_nick(message: Message, command: CommandObject):
     query = command.args
     if not query:
@@ -137,7 +130,6 @@ async def cmd_search_nick(message: Message, command: CommandObject):
     await send_search_result(message, data, "никнейм", query)
 
 @dp.message(Command("log"))
-@subscription_required
 async def cmd_log(message: Message):
     await send_logger_link(message)
 
@@ -146,23 +138,23 @@ async def send_search_result(message, data, search_type, query):
     if isinstance(data, dict) and "error" in data:
         output = f"<b>❌ Ошибка:</b> <code>{data['error']}</code>"
     else:
-        output = f"<b>Результаты поиска ({search_type}):</b>\n<pre>{json.dumps(data, ensure_ascii=False, indent=2)[:3000]}</pre>"
+        output = f"<b>✅ Результаты поиска ({search_type}):</b>\n<pre>{json.dumps(data, ensure_ascii=False, indent=2)[:3000]}</pre>"
     output += "\n\n<blockquote>Данные получены из открытых источников.</blockquote>"
     await message.answer(output, parse_mode="HTML")
     db.add_log(message.from_user.id, f"search_{search_type}", query, output[:500])
 
-# ---------- ЛОГЕР (ссылка) ----------
+# ---------- ЛОГЕР (ссылка на отчёт) ----------
 async def send_logger_link(message):
     host = os.getenv("RENDER_EXTERNAL_HOSTNAME", "localhost")
     link = f"https://{host}/log"
     db.add_log(message.from_user.id, "logger_link_request", link, "")
     await message.answer(
-        f"<b>📡 Логер</b>\n"
-        f"Перейдите по ссылке для сбора данных:\n"
+        f"<b>📡 Ваш персональный отчёт</b>\n\n"
+        f"Перейдите по ссылке, чтобы увидеть ваш IP, страну, город, провайдера и другую информацию:\n"
         f"<code>{link}</code>\n\n"
-        "<i>При переходе ваш IP, User-Agent и реферер будут зафиксированы.</i>",
+        "<i>Данные будут сохранены в лог-файл.</i>",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔗 Открыть логер", url=link)],
+            [InlineKeyboardButton(text="🔗 Открыть отчёт", url=link)],
             [InlineKeyboardButton(text="⬅️ Назад", callback_data="menu_main")]
         ]),
         parse_mode="HTML"
@@ -174,16 +166,28 @@ async def menu_callback(callback: CallbackQuery):
     await callback.answer()
     data = callback.data
     if data == "menu_main":
-        await callback.message.edit_text("<b>Главное меню</b>", reply_markup=main_menu(), parse_mode="HTML")
+        await callback.message.edit_text(
+            "<b>🔍 hsCmd beta — главное меню</b>",
+            reply_markup=main_menu(),
+            parse_mode="HTML"
+        )
     elif data == "menu_search":
-        await callback.message.edit_text("<b>🔍 Выберите тип поиска:</b>", reply_markup=search_menu(), parse_mode="HTML")
+        await callback.message.edit_text(
+            "<b>🔍 Выберите тип поиска:</b>",
+            reply_markup=search_menu(),
+            parse_mode="HTML"
+        )
     elif data == "menu_logger":
         await send_logger_link(callback.message)
     elif data == "menu_admin":
         if not db.is_admin(callback.from_user.id):
             await callback.message.answer("⛔ <b>Нет прав.</b>", parse_mode="HTML")
             return
-        await callback.message.edit_text("<b>⚙️ Админ-панель</b>", reply_markup=admin_menu(), parse_mode="HTML")
+        await callback.message.edit_text(
+            "<b>⚙️ Админ-панель</b>",
+            reply_markup=admin_menu(),
+            parse_mode="HTML"
+        )
 
 @dp.callback_query(lambda c: c.data.startswith("search_"))
 async def search_callback(callback: CallbackQuery, state: FSMContext):
@@ -204,20 +208,14 @@ async def handle_search_input(message: Message, state: FSMContext):
     data = await state.get_data()
     search_type = data.get("search_type")
     if not search_type:
-        # Если нет состояния – игнорируем (или можно предложить меню)
+        # Если нет состояния – игнорируем (пользователь просто пишет текст)
         return
     query = message.text.strip()
     if not query:
         await message.answer("Введите непустое значение.", parse_mode="HTML")
         return
 
-    # Проверка подписки
-    if not db.is_admin(message.from_user.id) and not db.is_subscribed(message.from_user.id):
-        await message.answer("❌ <b>Требуется подписка.</b>", parse_mode="HTML")
-        await state.clear()
-        return
-
-    # Выполняем поиск
+    # Выполняем поиск (без проверки подписки)
     func_map = {
         "vk": api_handlers.search_vk_by_name,
         "ip": api_handlers.search_by_ip,
@@ -234,7 +232,7 @@ async def handle_search_input(message: Message, state: FSMContext):
     await send_search_result(message, result, search_type, query)
     await state.clear()
 
-# ---------- АДМИН-КОЛБЭКИ ----------
+# ---------- АДМИН-КОЛБЭКИ (с проверкой прав) ----------
 @dp.callback_query(lambda c: c.data.startswith("admin_"))
 async def admin_callback(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
