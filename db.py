@@ -57,7 +57,7 @@ def is_subscribed(user_id):
     row = get_user(user_id)
     if not row:
         return False
-    until = row[4]  # subscription_until
+    until = row[4]
     return until > int(datetime.datetime.now().timestamp())
 
 def set_admin(user_id, admin_flag=1):
@@ -78,3 +78,19 @@ def add_log(user_id, action, query, result):
               (user_id, action, query, result))
     conn.commit()
     conn.close()
+
+def get_all_users():
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT * FROM users ORDER BY user_id")
+    rows = c.fetchall()
+    conn.close()
+    return rows
+
+def get_user_logs(user_id):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT * FROM logs WHERE user_id=? ORDER BY timestamp DESC LIMIT 50", (user_id,))
+    rows = c.fetchall()
+    conn.close()
+    return rows
