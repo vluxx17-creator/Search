@@ -17,12 +17,13 @@ async def set_commands():
         BotCommand(command="search_ip", description="Поиск по IP"),
         BotCommand(command="search_domain", description="Поиск по домену"),
         BotCommand(command="search_nick", description="Поиск по нику"),
-        BotCommand(command="log", description="Фото логгер"),
-        BotCommand(command="admin", description="Админ-панель")
+        BotCommand(command="log", description="Мой IP / отчёт")
     ])
 
 async def bot_polling():
     await set_commands()
+    # Удаляем вебхук, чтобы избежать конфликтов
+    await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot, skip_updates=True)
 
 def run_web():
